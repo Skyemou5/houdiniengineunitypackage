@@ -699,7 +699,7 @@ namespace HoudiniEngineUnity
 	/// <param name="nodeID">The node to retrieve the asset info for</param>
 	/// <param name="assetInfo">The asset info structure to populate</param>
 	/// <returns>True if successfully queried the asset info</returns>
-	public virtual bool GetAssetInfo(HAPI_NodeId nodeID, ref HAPI_AssetInfo assetInfo)
+	public virtual bool GetAssetInfo(HAPI_NodeId nodeID, ref HAPI_AssetInfo assetInfo, bool bLogError = true)
 	{
 	    return false;
 	}
@@ -973,6 +973,12 @@ namespace HoudiniEngineUnity
 	/// <param name="length">Must be at least 0 and at most HAPI_AttributeInfo::count - start.</param>
 	/// <returns>True if successfully queried the atttribute float data</returns>
 	public virtual bool GetAttributeFloatData(HAPI_NodeId nodeID, HAPI_PartId partID, string name, ref HAPI_AttributeInfo attributeInfo, [Out] float[] data, int start, int length)
+	{
+	    return false;
+	}
+
+	public virtual bool GetAttributeFloatArrayData(HAPI_NodeId nodeID, HAPI_PartId partID, string name, ref HAPI_AttributeInfo attrInfo,
+		ref float[] data, int dataLength, ref int[] sizesArray, int start, int sizesLength)
 	{
 	    return false;
 	}

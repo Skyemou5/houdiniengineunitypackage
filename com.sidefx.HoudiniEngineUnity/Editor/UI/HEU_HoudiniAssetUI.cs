@@ -72,6 +72,8 @@ namespace HoudiniEngineUnity
 	// Draws UI for instance inputs
 	private HEU_InstanceInputUI _instanceInputUI;
 
+	private SceneView _sceneView;
+
 	//	GUI CONTENT -----------------------------------------------------------------------------------------------
 
 	private static Texture2D _reloadhdaIcon;
@@ -131,6 +133,8 @@ namespace HoudiniEngineUnity
 	    _duplicateContent = new GUIContent("  Duplicate", _duplicateAssetIcon, "Safe duplication of this asset to create an exact copy. The asset is duplicated in Houdini. All data is copied over.");
 	    _resetParamContent = new GUIContent("  Reset All", _resetParamIcon, "Reset all parameters, materials, and inputs to their HDA default values, clear cache, reload HDA, cook, and generate output.");
 
+	    _sceneView = UnityEditor.EditorWindow.GetWindow<SceneView>();
+
 	    // Get the root gameobject, and the HDA bound to it
 	    _houdiniAssetRoot = target as HEU_HoudiniAssetRoot;
 	    TryAcquiringAsset();
@@ -160,7 +164,6 @@ namespace HoudiniEngineUnity
 
 	public void HEU_UIRepaint()
 	{
-	    //Repaint();
 	    SceneView.RepaintAll();
 	}
 
@@ -208,18 +211,18 @@ namespace HoudiniEngineUnity
 		    SerializedProperty assetCookStatusProperty = HEU_EditorUtility.GetSerializedProperty(_houdiniAssetSerializedObject, "_cookStatus");
 		    if (assetCookStatusProperty != null)
 		    {
-			DrawCurvesSection(_houdiniAsset, _houdiniAssetSerializedObject);
-
-			DrawInputNodesSection(_houdiniAsset, _houdiniAssetSerializedObject);
-
-			DrawTerrainSection(_houdiniAsset, _houdiniAssetSerializedObject);
-
 			// If this is a Curve asset, we don't need to draw parameters as its redundant
 			if (_houdiniAsset.AssetType != HEU_HoudiniAsset.HEU_AssetType.TYPE_CURVE)
 			{
 			    DrawParameters(_houdiniAsset.Parameters, ref _parameterEditor);
 			    HEU_EditorUI.DrawSeparator();
 			}
+
+			DrawCurvesSection(_houdiniAsset, _houdiniAssetSerializedObject);
+
+			DrawInputNodesSection(_houdiniAsset, _houdiniAssetSerializedObject);
+
+			DrawTerrainSection(_houdiniAsset, _houdiniAssetSerializedObject);
 
 			DrawInstanceInputs(_houdiniAsset, _houdiniAssetSerializedObject);
 
@@ -237,16 +240,25 @@ namespace HoudiniEngineUnity
 		// Check if any changes occurred, and if so, trigger a recook
 		if (EditorGUI.EndChangeCheck())
 		{
+		    // Check options that require a rebuild/recook if changed.
 		    bool oldUseOutputNodes = _houdiniAsset.UseOutputNodes;
+		    bool oldUsePoints = _houdiniAsset.GenerateMeshUsingPoints;
+
 		    _houdiniAssetSerializedObject.ApplyModifiedProperties();
 		    serializedObject.ApplyModifiedProperties();
 
 		    bool bNeedsRebuild = false;
+		    bool bNeedsRecook = false;
 
 		    // UseOutputNodes is a special parameter that requires us to rebuild in order to use it.
 		    if (_houdiniAsset.UseOutputNodes != oldUseOutputNodes)
 		    {
 			bNeedsRebuild = true;
+		    }
+
+		    if (_houdiniAsset.GenerateMeshUsingPoints != oldUsePoints)
+		    {
+			bNeedsRecook = true;
 		    }
 
 		    if (!bSkipAutoCook)
@@ -255,6 +267,10 @@ namespace HoudiniEngineUnity
 			if (HEU_PluginSettings.CookingEnabled && _houdiniAsset.AutoCookOnParameterChange && bNeedsRebuild)
 			{
 			    _houdiniAsset.RequestReload(true);
+			}
+			else if (bNeedsRecook)
+			{
+			    _houdiniAsset.RequestCook(bCheckParametersChanged: true, bAsync: false, bSkipCookCheck: false, bUploadParameters: true);
 			}
 			else if (HEU_PluginSettings.CookingEnabled && _houdiniAsset.AutoCookOnParameterChange && _houdiniAsset.DoesAssetRequireRecook())
 			{
@@ -393,6 +409,25 @@ namespace HoudiniEngineUnity
 
 		    EditorGUILayout.BeginHorizontal();
 
+		    // If inspector is not too small, create two columns for more visually pleasing UX
+		    int shortenLength = 420;
+
+		    int screenWidth = Screen.width;
+
+		    bool useTwoColumns = screenWidth > shortenLength;
+
+		    System.Action drawGenerateSection = () =>
+		    {
+			HEU_EditorUI.BeginSimpleSection("Generate");
+			    HEU_EditorUI.DrawPropertyField(assetObject, "_useOutputNodes", "Use output nodes", "Create outputs using output nodes. Note: Requires a full rebuild if changed");
+			    HEU_EditorUI.DrawPropertyField(assetObject, "_useLODGroups", "LOD Groups", "Automatically create Unity LOD group if found.");
+			    HEU_EditorUI.DrawPropertyField(assetObject, "_generateNormals", "Normals", "Generate normals in Unity for output geometry.");
+			    HEU_EditorUI.DrawPropertyField(assetObject, "_generateTangents", "Tangents", "Generate tangents in Unity for output geometry.");
+			    HEU_EditorUI.DrawPropertyField(assetObject, "_generateUVs", "UVs", "Force Unity to generate UVs for output geometry.");
+			    HEU_EditorUI.DrawPropertyField(assetObject, "_generateMeshUsingPoints", "Using Points", "Use point attributes instead of vertex attributes for geometry. Ignores vertex attributes.");
+			HEU_EditorUI.EndSimpleSection();
+		    };
+
 		    EditorGUILayout.BeginVertical();
 
 		    HEU_EditorUI.BeginSimpleSection("Cook Triggers");
@@ -402,6 +437,11 @@ namespace HoudiniEngineUnity
 			HEU_EditorUI.DrawPropertyField(assetObject, "_sessionSyncAutoCook", "Session Sync: Auto Cook", "When using Session Sync, this asset will automatically cook and generated output when it is cooked separately in Houdini (e.g. via parm changes).");
 		    HEU_EditorUI.EndSimpleSection();
 
+		    if (!useTwoColumns)
+		    {
+			drawGenerateSection();
+		    }
+
 		    HEU_EditorUI.BeginSimpleSection("Miscellaneous");
 			HEU_EditorUI.DrawPropertyField(assetObject, "_pushTransformToHoudini", "Push Transform To Houdini", "Send the asset's transform to Houdini and apply to object.");
 			HEU_EditorUI.DrawPropertyField(assetObject, "_ignoreNonDisplayNodes", "Ignore Non-Display Nodes", "Only display node geometry will be created.");
@@ -410,16 +450,12 @@ namespace HoudiniEngineUnity
 
 		    EditorGUILayout.EndVertical();
 
-		    EditorGUILayout.BeginVertical();
-		    HEU_EditorUI.BeginSimpleSection("Generate");
-			HEU_EditorUI.DrawPropertyField(assetObject, "_useOutputNodes", "Use output nodes", "Create outputs using output nodes. Note: Requires a full rebuild if changed");
-			HEU_EditorUI.DrawPropertyField(assetObject, "_useLODGroups", "LOD Groups", "Automatically create Unity LOD group if found.");
-			HEU_EditorUI.DrawPropertyField(assetObject, "_generateNormals", "Normals", "Generate normals in Unity for output geometry.");
-			HEU_EditorUI.DrawPropertyField(assetObject, "_generateTangents", "Tangents", "Generate tangents in Unity for output geometry.");
-			HEU_EditorUI.DrawPropertyField(assetObject, "_generateUVs", "UVs", "Force Unity to generate UVs for output geometry.");
-			HEU_EditorUI.DrawPropertyField(assetObject, "_generateMeshUsingPoints", "Using Points", "Use point attributes instead of vertex attributes for geometry. Ignores vertex attributes.");
-		    HEU_EditorUI.EndSimpleSection();
-		    EditorGUILayout.EndVertical();
+		    if (useTwoColumns)
+		    {
+			EditorGUILayout.BeginVertical();
+			drawGenerateSection();
+			EditorGUILayout.EndVertical();
+		    }
 
 		    EditorGUILayout.EndHorizontal();
 
@@ -806,9 +842,7 @@ namespace HoudiniEngineUnity
 	    Texture2D headerImage = Resources.Load(fileName) as Texture2D;
 
 	    HEU_EditorUI.DrawSeparator();
-	    //HEU_EditorUI.BeginSection();
 	    GUILayout.Label(headerImage);
-	    //HEU_EditorUI.EndSection();
 
 	    GUI.backgroundColor = Color.white;
 	}
@@ -894,14 +928,26 @@ namespace HoudiniEngineUnity
 
 	    HEU_EditorUI.BeginSection();
 	    {
+		List<HEU_Curve> curves = asset.GetCurves();
+
+		EditorGUI.indentLevel--;
+		for (int i = 0; i < curves.Count; ++i)
+		{
+		    if (curves[i].Parameters != null)
+		    {
+			DrawParameters(curves[i].Parameters, ref _curveParameterEditor);
+		    }
+		}
+		HEU_EditorUI.DrawSeparator();
+
+		EditorGUI.indentLevel++;
+
 		SerializedProperty showCurvesProperty = HEU_EditorUtility.GetSerializedProperty(assetObject, "_showCurvesSection");
 		if (showCurvesProperty != null)
 		{
 		    showCurvesProperty.boolValue = HEU_EditorUI.DrawFoldOut(showCurvesProperty.boolValue, "CURVES");
 		    if (showCurvesProperty.boolValue)
 		    {
-			List<HEU_Curve> curves = asset.GetCurves();
-
 			SerializedProperty curveEditorProperty = HEU_EditorUtility.GetSerializedProperty(assetObject, "_curveEditorEnabled");
 			if (curveEditorProperty != null)
 			{
@@ -966,7 +1012,31 @@ namespace HoudiniEngineUnity
 			    HEU_EditorUI.DrawHeadingLabel("Projection Settings");
 			    EditorGUI.indentLevel++;
 
-			    HEU_EditorUtility.EditorDrawSerializedProperty(assetObject, "_curveProjectDirection", label: "Project Direction", tooltip: "The ray cast direction for projecting the curve points.");
+			    SerializedProperty projectCurveToSceneViewProperty = HEU_EditorUtility.GetSerializedProperty(assetObject, "_curveProjectDirectionToView");
+			    HEU_EditorUtility.EditorDrawSerializedProperty(assetObject, "_curveProjectDirectionToView", label: "Project Direction To Scene View", tooltip: "Project the curve points according to the scene view.");
+
+			    bool curveToSceneView = projectCurveToSceneViewProperty.boolValue;
+			    Vector3 projectDir = Vector3.down;
+
+			    if (curveToSceneView && _sceneView != null)
+			    {
+				Quaternion sceneRot = _sceneView.rotation;
+
+				if (sceneRot != Quaternion.identity)
+				{
+				    projectDir = sceneRot * Vector3.forward;
+				}
+				else
+				{
+				    curveToSceneView = false; // Fallback to hard coded direction
+				}
+			    }
+
+			    using (new EditorGUI.DisabledScope(curveToSceneView))
+			    {
+				HEU_EditorUtility.EditorDrawSerializedProperty(assetObject, "_curveProjectDirection", label: "Project Direction", tooltip: "The ray cast direction for projecting the curve points.");
+			    }
+
 			    HEU_EditorUtility.EditorDrawFloatProperty(assetObject, "_curveProjectMaxDistance", label: "Project Max Distance", tooltip: "The maximum ray cast distance for projecting the curve points.");
 
 			    _projectCurvePointsButton.text = projectLabel;
@@ -975,7 +1045,11 @@ namespace HoudiniEngineUnity
 				SerializedProperty projectDirProperty = HEU_EditorUtility.GetSerializedProperty(assetObject, "_curveProjectDirection");
 				SerializedProperty maxDistanceProperty = HEU_EditorUtility.GetSerializedProperty(assetObject, "_curveProjectMaxDistance");
 
-				Vector3 projectDir = projectDirProperty != null ? projectDirProperty.vector3Value : Vector3.down;
+				if (!curveToSceneView && projectDirProperty != null)
+				{
+				    projectDir = projectDirProperty.vector3Value;
+				}
+
 				float maxDistance = maxDistanceProperty != null ? maxDistanceProperty.floatValue : 0;
 
 				for (int i = 0; i < curves.Count; ++i)
@@ -1035,13 +1109,6 @@ namespace HoudiniEngineUnity
 
 			HEU_EditorUI.DrawSeparator();
 
-			for (int i = 0; i < curves.Count; ++i)
-			{
-			    if (curves[i].Parameters != null)
-			    {
-				DrawParameters(curves[i].Parameters, ref _curveParameterEditor);
-			    }
-			}
 		    }
 		}
 	    }
@@ -1123,7 +1190,6 @@ namespace HoudiniEngineUnity
 			bool bAttributesDirty = !System.Array.TrueForAll(attributesStoresArray, s => !s.AreAttributesDirty());
 			if (bAttributesDirty)
 			{
-			    //HEU_Logger.Log("Cook for attributes dirty!");
 			    _houdiniAsset.RequestCook(bCheckParametersChanged: true, bAsync: false, bSkipCookCheck: false, bUploadParameters: true);
 			}
 		    }

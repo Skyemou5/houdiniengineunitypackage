@@ -283,6 +283,7 @@ namespace HoudiniEngineUnity
 
 	    _sessionData.ProcessID = processID;
 	    _sessionData.Port = serverPort;
+	    _sessionData.ThisSessionMode = SessionMode.Socket;
 
 	    // Then create the session
 	    _sessionData._HAPISession.type = HAPI_SessionType.HAPI_SESSION_THRIFT;
@@ -385,6 +386,7 @@ namespace HoudiniEngineUnity
 	    HAPI_Result result;
 
 	    _sessionData.PipeName = pipeName;
+	    _sessionData.ThisSessionMode = SessionMode.Pipe;
 
 	    // Start at failed since this is several steps. Once connected, we can set it as such.
 	    ConnectionState = SessionConnectionState.FAILED_TO_CONNECT;
@@ -671,15 +673,17 @@ namespace HoudiniEngineUnity
 	{
 	    HAPI_SessionType sessionType = HAPI_SessionType.HAPI_SESSION_THRIFT;
 	    int processID = -1;
+	    int port = -1;
 	    if (IsSessionValid())
 	    {
 		sessionType = _sessionData.SessionType;
 		processID = _sessionData.ProcessID;
+		port = _sessionData.Port;
 
 		CheckAndCloseExistingSession();
 	    }
 
-	    if (sessionType == HAPI_SessionType.HAPI_SESSION_THRIFT && processID > 0)
+	    if (sessionType == HAPI_SessionType.HAPI_SESSION_THRIFT && processID > 0 && port > 0)
 	    {
 		return CreateThriftSocketSession(true, HEU_PluginSettings.Session_Localhost, HEU_PluginSettings.Session_Port, HEU_PluginSettings.Session_AutoClose, HEU_PluginSettings.Session_Timeout, true);
 	    }
@@ -749,6 +753,8 @@ namespace HoudiniEngineUnity
 		HandleSessionConnectionFailure();
 		return false;
 	    }
+
+            SetServerEnvString(HEU_HAPIConstants.HAPI_ENV_CLIENT_NAME, "unity");
 
 	    sessionData.IsInitialized = true;
 	    ConnectionState = SessionConnectionState.CONNECTED;
@@ -1315,10 +1321,10 @@ namespace HoudiniEngineUnity
 	/// <param name="nodeID">The node to retrieve the asset info for</param>
 	/// <param name="assetInfo">The asset info structure to populate</param>
 	/// <returns>True if successfully queried the asset info</returns>
-	public override bool GetAssetInfo(HAPI_NodeId nodeID, ref HAPI_AssetInfo assetInfo)
+	public override bool GetAssetInfo(HAPI_NodeId nodeID, ref HAPI_AssetInfo assetInfo, bool bLogError)
 	{
 	    HAPI_Result result = HEU_HAPIFunctions.HAPI_GetAssetInfo(ref _sessionData._HAPISession, nodeID, out assetInfo);
-	    HandleStatusResult(result, "Getting Asset Info", false, true);
+	    HandleStatusResult(result, "Getting Asset Info", false, bLogError);
 	    return (result == HAPI_Result.HAPI_RESULT_SUCCESS);
 	}
 
@@ -1664,6 +1670,14 @@ namespace HoudiniEngineUnity
 	{
 	    HAPI_Result result = HEU_HAPIFunctions.HAPI_GetAttributeFloatData(ref _sessionData._HAPISession, nodeID, partID, name.AsByteArray(), ref attributeInfo, -1, data, start, length);
 	    HandleStatusResult(result, "Getting Attribute Float Data", false, true);
+	    return (result == HAPI_Result.HAPI_RESULT_SUCCESS);
+	}
+
+	public override bool GetAttributeFloatArrayData(HAPI_NodeId nodeID, HAPI_PartId partID, string name, ref HAPI_AttributeInfo attrInfo,
+		ref float[] data, int dataLength, ref int[] sizesArray, int start, int sizesLength)
+	{
+	    HAPI_Result result = HEU_HAPIFunctions.HAPI_GetAttributeFloatArrayData(ref _sessionData._HAPISession, nodeID, partID, name.AsByteArray(), ref attrInfo, data, dataLength, sizesArray, start, sizesLength);
+	    HandleStatusResult(result, "Getting Attribute Float Array Data", false, true);
 	    return (result == HAPI_Result.HAPI_RESULT_SUCCESS);
 	}
 

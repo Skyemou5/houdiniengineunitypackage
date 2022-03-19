@@ -186,11 +186,13 @@ namespace HoudiniEngineUnity
 				"Prefab: " + prefabPath;
 
 		heu_root._houdiniAsset.WarnedPrefabNotSupported = true;
-		if (HEU_EditorUtility.DisplayDialog(title, message, "Remove Prefab & Revert", "Keep Prefab"))
+		if (HEU_EditorUtility.DisplayDialog(title, message, "Remove Prefab && Revert", "Keep Prefab"))
 		{
 		    HEU_EditorUtility.DisconnectPrefabInstance(instance);
-
 		    HEU_AssetDatabase.DeleteAssetAtPath(prefabPath);
+
+		    // Doesn't actually refresh properly, but should be fixed in 2021.2 and 2022.1 
+		    HEU_AssetDatabase.SaveAndRefreshDatabase();
 		}
 	    }
 #endif

@@ -147,6 +147,9 @@ namespace HoudiniEngineUnity
 	[SerializeField]
 	private Matrix4x4 _lastSyncedTransformMatrix;
 
+	[SerializeField]
+	private List<Matrix4x4> _lastSyncedChildTransformMatrices;
+
 	// Location of this asset's cache folder for storing persistant data
 	[SerializeField]
 	private string _assetCacheFolderPath;
@@ -344,7 +347,7 @@ namespace HoudiniEngineUnity
 	public bool IgnoreNonDisplayNodes { get { return _ignoreNonDisplayNodes; } set { _ignoreNonDisplayNodes = value; } }
 
 	[SerializeField]
-	private bool _useOutputNodes = false;
+	private bool _useOutputNodes = true;
 	public bool UseOutputNodes { get { return _useOutputNodes; } set {_useOutputNodes = value; } }
 
 	[SerializeField]
@@ -410,6 +413,10 @@ namespace HoudiniEngineUnity
 
 	[SerializeField]
 	private Vector3 _curveProjectDirection = Vector3.down;
+
+	[SerializeField]
+	private bool _curveProjectDirectionToView = true;
+
 #pragma warning restore 0414
 
 	[SerializeField]
@@ -795,6 +802,12 @@ namespace HoudiniEngineUnity
 	public void RequestReload(bool bAsync)
 	{
 #if HOUDINIENGINEUNITY_ENABLED
+	    if (!HEU_PluginSettings.CookDisabledGameObjects && !this.gameObject.activeInHierarchy)
+	    {
+		HEU_Logger.LogWarning("Houdini Asset: " + this.RootGameObject.name + " Skipped cooking due to being disabled. Enable and recook manually to resync!");
+		return;
+	    }
+
 	    if (bAsync)
 	    {
 		_requestBuildAction = AssetBuildAction.RELOAD;
@@ -820,6 +833,12 @@ namespace HoudiniEngineUnity
 	{
 #if HOUDINIENGINEUNITY_ENABLED
 	    //HEU_Logger.Log(HEU_Defines.HEU_NAME + ": Requesting Cook");
+
+	    if (!HEU_PluginSettings.CookDisabledGameObjects && !this.gameObject.activeInHierarchy)
+	    {
+		HEU_Logger.LogWarning("Houdini Asset: " + this.RootGameObject.name + " Skipped cooking due to being disabled. Enable and recook manually to resync!");
+		return;
+	    }
 
 	    if (bAsync)
 	    {
@@ -1236,6 +1255,12 @@ namespace HoudiniEngineUnity
 	    _cookStartTime = Time.realtimeSinceStartup;
 #endif
 
+	    if (!HEU_PluginSettings.CookDisabledGameObjects && !this.gameObject.activeInHierarchy)
+	    {
+		HEU_Logger.LogWarning("Houdini Asset: " + this.RootGameObject.name + " Skipped cooking due to being disabled. Enable and recook manually to resync!");
+		return false;
+	    }
+
 	    bool bStarted = false;
 
 	    try
@@ -1268,9 +1293,22 @@ namespace HoudiniEngineUnity
 	private void DoPostCookWork(HEU_SessionBase session)
 	{
 	    UpdateTotalCookCount();
+	    bool bNeedsRebuild = false;
+
 	    foreach (HEU_ObjectNode objNode in _objectNodes)
 	    {
+		if (objNode == null)
+		{
+		    bNeedsRebuild = true;
+		    continue;
+		}
+
 		objNode.ProcessUnityScriptAttributes(session);
+	    }
+
+	    if (bNeedsRebuild)
+	    {
+		_objectNodes = _objectNodes.Filter(obj => obj != null);
 	    }
 
 	    // Update the Editor UI
@@ -1299,7 +1337,12 @@ namespace HoudiniEngineUnity
 	    else
 	    {
 #if UNITY_EDITOR && UNITY_2018_3_OR_NEWER
+#if UNITY_EDITOR_2021_2_OR_NEWER
 		var stage = UnityEditor.SceneManagement.PrefabStageUtility.GetCurrentPrefabStage();
+#else
+		var stage = UnityEditor.SceneManagement.PrefabStageUtility.GetCurrentPrefabStage();
+#endif
+		
 		if (stage != null)
 		{
 		    // Disable UI when HDA is in prefab stage
@@ -1370,6 +1413,11 @@ namespace HoudiniEngineUnity
 	    bool bUploadParameterPreset, bool bForceUploadInputs,
 	    bool bCookingSessionSync)
 	{
+	    if (!HEU_PluginSettings.CookDisabledGameObjects && !this.gameObject.activeInHierarchy)
+	    {
+		HEU_Logger.LogWarning("Houdini Asset: " + this.RootGameObject.name + " Skipped cooking due to being disabled. Enable and recook manually to resync!");
+		return false;
+	    }
 
 	    if (_preAssetEvent != null)
 	    {
@@ -1644,19 +1692,29 @@ namespace HoudiniEngineUnity
 
 		bool ignoreError = false;
 		// Some heightfield nodes seem bugged in Houdini at the the moment, always producing an error
-		if (resultString.Contains("Invalid volume \"__temp_debris\" specified"))
+		if (!ignoreError && resultString.Contains("Invalid volume \"__temp_debris\" specified"))
+		{
+		    ignoreError = true;
+		}
+
+		// Depending on your OS, certain nodes, i.e. shader-related nodes may contain non-fatal errors (see Bug: 116237)
+		if (!ignoreError && resultString.Contains("Unable to load shader"))
+		{
+		    ignoreError = true;
+		}
+
+		if (!ignoreError && resultString.Contains("slump_water/make_tmp_planes/repeat_end"))
 		{
 		    ignoreError = true;
 		}
 
 		if (!ignoreError)
 		{
-		    HEU_Logger.LogErrorFormat(resultString);
+		    HEU_Logger.LogWarningFormat(resultString);
 		    return;
 		}
 		else
 		{
-		    //HEU_Logger.LogWarning(resultString);
 		    HEU_CookLogs.Instance.AppendCookLog(resultString);
 		}
 	    }
@@ -1707,7 +1765,8 @@ namespace HoudiniEngineUnity
 	    RemoveUnusedMaterials();
 
 	    // This forces the attribute editor to recache
-	    _toolsInfo._recacheRequired = true;
+	    if (_toolsInfo)
+		_toolsInfo._recacheRequired = true;
 
 	    // This is required in order to flag to Unity that the scene data has changed.
 	    // Otherwise saving the scene does not work.
@@ -1832,7 +1891,7 @@ namespace HoudiniEngineUnity
 	/// <returns>True if asset requires a recook.</returns>
 	public bool DoesAssetRequireRecook()
 	{
-	    if (_parameters.RequiresRegeneration || _parameters.HaveParametersChanged() || _parameters.HasModifiersPending())
+	    if (_parameters == null || _parameters.RequiresRegeneration || _parameters.HaveParametersChanged() || _parameters.HasModifiersPending())
 	    {
 		return true;
 	    }
@@ -1840,6 +1899,9 @@ namespace HoudiniEngineUnity
 	    // Check curves
 	    foreach (HEU_Curve curve in _curves)
 	    {
+		if (_curves == null)
+		    continue;
+		
 		if (curve.Parameters.HaveParametersChanged())
 		{
 		    return true;
@@ -1848,6 +1910,9 @@ namespace HoudiniEngineUnity
 
 	    foreach (HEU_InputNode inputNode in _inputNodes)
 	    {
+		if (_inputNodes == null)
+		    continue;
+		
 		if (inputNode.InputType != HEU_InputNode.InputNodeType.PARAMETER && (inputNode.RequiresUpload || inputNode.HasInputNodeTransformChanged()))
 		{
 		    return true;
@@ -1856,6 +1921,9 @@ namespace HoudiniEngineUnity
 
 	    foreach (HEU_VolumeCache volume in _volumeCaches)
 	    {
+		if (volume == null)
+		    continue;
+		
 		if (volume.IsDirty)
 		{
 		    return true;
@@ -2325,8 +2393,15 @@ namespace HoudiniEngineUnity
 
 	private void UploadCurvesParameters(HEU_SessionBase session, bool bCheckParamsChanged)
 	{
+	    bool bNeedsRebuild = false;
 	    foreach (HEU_Curve curve in _curves)
 	    {
+		if (curve == null)
+		{
+		    bNeedsRebuild = true;
+		    continue;
+		}
+
 		if (curve.IsEditable())
 		{
 		    curve.UpdateCurveInputForCustomAttributes(session, this);
@@ -2337,17 +2412,36 @@ namespace HoudiniEngineUnity
 		    }
 		}
 	    }
+
+	    if (bNeedsRebuild)
+	    {
+		_curves = _curves.Filter(curve => curve != null);
+	    }
 	}
 
 	private void UploadAttributeValues(HEU_SessionBase session)
 	{
+	    // Rebuild for undo safety in UI:
+	    bool bNeedsRebuild = false;
+
 	    for (int i = _attributeStores.Count - 1; i >= 0; i--)
 	    {
 		HEU_AttributesStore attributeStore = _attributeStores[i];
+		if (attributeStore == null)
+		{
+		    bNeedsRebuild = true;
+		    continue;
+		}
+
 		if (!attributeStore.IsValidStore(session))
 		{
 		    RemoveAttributeStore(attributeStore);
 		}
+	    }
+
+	    if (bNeedsRebuild)
+	    {
+		_attributeStores = _attributeStores.Filter(store => store != null);
 	    }
 
 	    // Normally only the attribute stores that are dirty will be uploaded to Houdini.
@@ -2415,6 +2509,11 @@ namespace HoudiniEngineUnity
 	{
 	    foreach (HEU_InputNode inputNode in _inputNodes)
 	    {
+		if (inputNode == null)
+		{
+		    continue;
+		}
+
 		// Upload all but parameter types, as those are taken care of in the parameter update
 		if ((inputNode.InputType != HEU_InputNode.InputNodeType.PARAMETER || bUpdateAll)
 			&& (bForceUpdate || inputNode.RequiresUpload || inputNode.HasInputNodeTransformChanged())
@@ -2434,6 +2533,9 @@ namespace HoudiniEngineUnity
 	{
 	    foreach (HEU_InputNode inputNode in _inputNodes)
 	    {
+		if (inputNode == null)
+		    return true;
+		
 		if (inputNode.HasInputNodeTransformChanged())
 		{
 		    return true;
@@ -2629,6 +2731,9 @@ namespace HoudiniEngineUnity
 	    // Clear part instances, to make sure that the object instances don't overwrite the part instances.
 	    foreach (HEU_ObjectNode objNode in _objectNodes)
 	    {
+		if (objNode == null)
+		    continue;
+		
 		if (objNode.IsInstancer())
 		{
 		    objNode.ClearObjectInstances(session);
@@ -2637,11 +2742,17 @@ namespace HoudiniEngineUnity
 
 	    foreach (HEU_ObjectNode objNode in _objectNodes)
 	    {
+		if (objNode == null)
+		    continue;
+		
 		objNode.GeneratePartInstances(session);
 	    }
 
 	    foreach (HEU_ObjectNode objNode in _objectNodes)
 	    {
+		if (objNode == null)
+		    continue;
+		
 		if (objNode.IsInstancer())
 		{
 		    objNode.GenerateObjectInstances(session);
@@ -3314,6 +3425,7 @@ namespace HoudiniEngineUnity
 
 		// Save last sync'd transform
 		_lastSyncedTransformMatrix = _rootGameObject.transform.localToWorldMatrix;
+		SyncChildTransforms();
 	    }
 	}
 
@@ -3341,7 +3453,7 @@ namespace HoudiniEngineUnity
 
 		if (bOnlySendIfChangedFromLastSync)
 		{
-		    if (_lastSyncedTransformMatrix == transformMatrix)
+		    if (!HasTransformChangedSinceLastUpdate())
 		    {
 			return;
 		    }
@@ -3355,6 +3467,7 @@ namespace HoudiniEngineUnity
 		else
 		{
 		    _lastSyncedTransformMatrix = transformMatrix;
+		    SyncChildTransforms();
 		}
 
 		// Not updating parameters after setting object transform as that is
@@ -3517,7 +3630,33 @@ namespace HoudiniEngineUnity
 	/// <returns>True if transform has changed since last upload</returns>
 	public bool HasTransformChangedSinceLastUpdate()
 	{
-	    return (_lastSyncedTransformMatrix != transform.localToWorldMatrix);
+	    if (_lastSyncedTransformMatrix != _rootGameObject.transform.localToWorldMatrix)
+	    {
+		return true;
+	    }
+
+	    bool recursive = HEU_PluginSettings.ChildTransformChangeTriggersCooks;
+
+	    if (recursive && _lastSyncedChildTransformMatrices != null)
+	    {
+		List<Matrix4x4> curTransformValues = new List<Matrix4x4>();
+		HEU_InputUtility.GetChildrenTransforms(_rootGameObject.transform, ref curTransformValues);
+
+		if (_lastSyncedChildTransformMatrices.Count != curTransformValues.Count)
+		{
+		    return true;
+		}
+
+		for (int i = 0; i < curTransformValues.Count; i++)
+		{
+		    if (_lastSyncedChildTransformMatrices[i] != curTransformValues[i])
+		    {
+			return true;
+		    }
+		}
+	    }
+
+	    return false;
 	}
 
 	public void GetClonableParts(List<HEU_PartData> clonableParts)
@@ -3701,14 +3840,27 @@ namespace HoudiniEngineUnity
 
 	public List<HEU_InputNode> GetNonParameterInputNodes()
 	{
+	    // Helps rebuild - Needed to get some undo operations to not error
+	    bool bNeedsRebuild = false;
+
 	    List<HEU_InputNode> nodes = new List<HEU_InputNode>();
 	    foreach (HEU_InputNode node in _inputNodes)
 	    {
+		if (node == null)
+		{
+		    bNeedsRebuild = true;
+		    continue;
+		}
+		
 		if (node.InputType != HEU_InputNode.InputNodeType.PARAMETER)
 		{
 		    nodes.Add(node);
 		}
 	    }
+
+	    if (bNeedsRebuild)
+		_inputNodes = _inputNodes.Filter(node => node != null);
+
 	    return nodes;
 	}
 
@@ -4626,7 +4778,8 @@ namespace HoudiniEngineUnity
 	    HEU_SessionBase session = GetAssetSession(true);
 
 	    // Set parameter preset for asset
-	    newAsset.Parameters.SetPresetData(_parameters.GetPresetData());
+	    if (newAsset.Parameters != null && _parameters != null)
+		newAsset.Parameters.SetPresetData(_parameters.GetPresetData());
 
 	    // Set parameter preset for curves
 	    // The curve names for the new asset might be different than that of the old one for reasons
@@ -4846,6 +4999,17 @@ namespace HoudiniEngineUnity
 		}
 	    }
 	    
+	}
+
+	private void SyncChildTransforms()
+	{
+	    if (_lastSyncedChildTransformMatrices == null)
+	    {
+		_lastSyncedChildTransformMatrices = new List<Matrix4x4>();
+	    }
+
+	    _lastSyncedChildTransformMatrices.Clear();
+	    HEU_InputUtility.GetChildrenTransforms(_rootGameObject.transform, ref _lastSyncedChildTransformMatrices);
 	}
 
 	// Equivalence function (Mostly for testing purposes) =======================================================================

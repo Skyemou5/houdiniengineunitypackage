@@ -105,8 +105,6 @@ namespace HoudiniEngineUnity
 	{
 	    int plusButtonWidth = 20;
 
-	    //GUIStyle boldLabelStyle = new GUIStyle(EditorStyles.boldLabel);
-	    //boldLabelStyle.alignment = TextAnchor.UpperLeft;
 	    const string inputTypeTooltip = @"Input type of the object. 
 
 The HDA type can accept any object with a HEU_HoudiniAssetRoot component. (Including curves)
@@ -167,17 +165,14 @@ The UNITY_MESH type can accept any GameObject (Including Terrain, HEU_BoundingVo
 				bSkipElements = true;
 			    }
 
-			    if (GUILayout.Button("Add Selection"))
-			    {
-				HEU_SelectionWindow.ShowWindow(inputNode.HandleSelectedObjectsForInputHDAs, typeof(HEU_HoudiniAssetRoot));
-			    }
-
 			    if (GUILayout.Button("Clear"))
 			    {
 				inputAssetsProperty.ClearArray();
 				bSkipElements = true;
 			    }
 			}
+
+			DrawSelectionWindow(HEU_InputNode.InputObjectType.HDA, inputNode);
 
 			if (!bSkipElements)
 			{
@@ -249,32 +244,14 @@ The UNITY_MESH type can accept any GameObject (Including Terrain, HEU_BoundingVo
 				bSkipElements = true;
 			    }
 
-			    if (GUILayout.Button("Add Selection"))
-			    {
-				if (inputObjectType == HEU_InputNode.InputObjectType.TERRAIN)
-				{
-				    HEU_SelectionWindow.ShowWindow(inputNode.HandleSelectedObjectsForInputObjects, typeof(Terrain));
-				}
-				else if (inputObjectType == HEU_InputNode.InputObjectType.BOUNDING_BOX)
-				{
-				    HEU_SelectionWindow.ShowWindow(inputNode.HandleSelectedObjectsForInputObjects, typeof(HEU_BoundingVolume));
-				}
-				else if (inputObjectType == HEU_InputNode.InputObjectType.TILEMAP)
-				{
-				    HEU_SelectionWindow.ShowWindow(inputNode.HandleSelectedObjectsForInputObjects, typeof(Tilemap));
-				}
-				else
-				{
-				    HEU_SelectionWindow.ShowWindow(inputNode.HandleSelectedObjectsForInputObjects, typeof(GameObject));
-				}
-			    }
-
 			    if (GUILayout.Button("Clear"))
 			    {
 				inputObjectsProperty.ClearArray();
 				bSkipElements = true;
 			    }
 			}
+
+			DrawSelectionWindow(inputObjectType, inputNode);
 
 			if (!bSkipElements)
 			{
@@ -287,7 +264,6 @@ The UNITY_MESH type can accept any GameObject (Including Terrain, HEU_BoundingVo
 				    {
 					EditorGUILayout.LabelField("Input " + (i + 1));
 
-					//using (var vs3 = new EditorGUILayout.VerticalScope())
 					{
 					    if (GUILayout.Button("+", GUILayout.Width(plusButtonWidth)))
 					    {
@@ -307,7 +283,7 @@ The UNITY_MESH type can accept any GameObject (Including Terrain, HEU_BoundingVo
 				    EditorGUI.indentLevel++;
 				    using (var vs4 = new EditorGUILayout.VerticalScope())
 				    {
-					if (i < inputNode._uiCache._inputObjectCache.Count)
+					if (i < inputNode._uiCache._inputObjectCache.Count && i < inputNode.InputObjects.Count)
 					{
 					    HEU_InputNodeUICache.HEU_InputObjectUICache objectCache = inputNode._uiCache._inputObjectCache[i];
 					    GameObject oldObject = inputNode.InputObjects[i]._gameObject;
@@ -424,6 +400,159 @@ The UNITY_MESH type can accept any GameObject (Including Terrain, HEU_BoundingVo
 		}
 	    }
 	}
+
+	public static void HandleSelectedObjectsForInputHDAs(GameObject[] selectedObjects, HEU_InputNode inputNode)
+	{
+	    inputNode.HandleSelectedObjectsForInputHDAs(selectedObjects);
+
+	    inputNode._uiCache._inputNodeSerializedObject.ApplyModifiedProperties();
+	    inputNode.RequiresUpload = true;
+
+	    inputNode.ClearUICache();
+	}
+
+	public static void HandleSelectedObjectsForInputObjects(GameObject[] selectedObjects, HEU_InputNode inputNode)
+	{
+	    inputNode.HandleSelectedObjectsForInputObjects(selectedObjects);
+	    inputNode._uiCache._inputNodeSerializedObject.ApplyModifiedProperties();
+	    inputNode.RequiresUpload = true;
+
+	    inputNode.ClearUICache();
+	}
+
+	private static void DrawSelectionWindow(HEU_InputNode.InputObjectType inputObjectType, HEU_InputNode inputNode)
+	{
+	    using (var hs1 = new EditorGUILayout.HorizontalScope())
+	    {
+		if (GUILayout.Button(new GUIContent("Selection Window", "Use a custom window to select the objects from the Hierarchy.")))
+		{
+		    if (HEU_InputNode.GetInternalObjectType(inputObjectType) == HEU_InputNode.InternalObjectType.HDA)
+		    {
+			HEU_SelectionWindow.ShowWindow(HandleSelectedObjectsForInputHDAs, typeof(HEU_HoudiniAssetRoot), inputNode);
+		    }
+		    else if (inputObjectType == HEU_InputNode.InputObjectType.TERRAIN)
+		    {
+		        HEU_SelectionWindow.ShowWindow(HandleSelectedObjectsForInputObjects, typeof(Terrain), inputNode);
+		    }
+		    else if (inputObjectType == HEU_InputNode.InputObjectType.BOUNDING_BOX)
+		    {
+		        HEU_SelectionWindow.ShowWindow(HandleSelectedObjectsForInputObjects, typeof(HEU_BoundingVolume), inputNode);
+		    }
+		    else if (inputObjectType == HEU_InputNode.InputObjectType.TILEMAP)
+		    {
+		        HEU_SelectionWindow.ShowWindow(HandleSelectedObjectsForInputObjects, typeof(Tilemap), inputNode);
+		    }
+		    else
+		    {
+		        HEU_SelectionWindow.ShowWindow(HandleSelectedObjectsForInputObjects, typeof(GameObject), inputNode);
+		    }
+		}
+
+		if (!inputNode.IsUsingSelectFromHierarchy)
+		{
+		    string title = "Select from Hierarchy (Locks Inspector)";
+		    float shortenLength = 420;
+		    float reallyShortLength = 320;
+
+		    float screenWidth = Screen.width;
+		    if (screenWidth < reallyShortLength)
+		    {
+			title = "From Hierarchy";
+		    }
+		    else if (screenWidth < shortenLength)
+		    {
+			title = "Select from Hierarchy";
+		    }
+		
+		    if (GUILayout.Button(new GUIContent(title, "Locks the inspector and so you can select GameObjects from the Hierarchy. Once select, press Use Current Selection to add the specified objects as inputs.")))
+		    {
+		        SetInspectorLock(true);
+			inputNode.IsUsingSelectFromHierarchy = true;
+		    }
+		}
+		else
+		{
+		    if (GUILayout.Button("Use Current Selection"))
+		    {
+		        SetInspectorLock(false);
+			inputNode.IsUsingSelectFromHierarchy = false;
+
+			GameObject[] selection = Selection.gameObjects;
+			List<GameObject> filteredObjects = new List<GameObject>(selection);
+
+
+			filteredObjects = filteredObjects.Filter((GameObject obj) => {
+			    if (obj == null)
+			    {
+				return false;
+			    }
+
+			    bool result = true;
+
+			    if (HEU_InputNode.GetInternalObjectType(inputObjectType) == HEU_InputNode.InternalObjectType.HDA 
+			        && obj.GetComponent<HEU_HoudiniAssetRoot>() == null)
+			    {
+			    	result = false;
+			    }
+			    else if (inputObjectType == HEU_InputNode.InputObjectType.TERRAIN
+			        && obj.GetComponent<Terrain>() == null)
+			    {
+				result = false;
+			    }
+			    else if (inputObjectType == HEU_InputNode.InputObjectType.BOUNDING_BOX
+			        && obj.GetComponent<HEU_BoundingVolume>() == null)
+			    {
+			        result = false;
+			    }
+			    else if (inputObjectType == HEU_InputNode.InputObjectType.TILEMAP
+			        && obj.GetComponent<Tilemap>() == null)
+			    {
+				result = false;
+			    }
+
+			    if (result == false)
+			    {
+				HEU_Logger.LogWarning("Houdini GameObject selection: " + obj.name + " filtered out due to invalid type!");
+				return false;
+			    }
+
+			    return true;
+			});
+
+			if (HEU_InputNode.GetInternalObjectType(inputObjectType) == HEU_InputNode.InternalObjectType.HDA)
+			{
+			    HandleSelectedObjectsForInputHDAs(filteredObjects.ToArray(), inputNode);
+			}
+			else
+			{
+			    HandleSelectedObjectsForInputObjects(filteredObjects.ToArray(), inputNode);
+			}
+
+			// Populate input cache if modified.
+			if (inputNode._uiCache == null)
+			{
+			    PopulateCache(inputNode);
+			}
+
+			if (inputNode.ParentAsset && inputNode.ParentAsset.RootGameObject)
+			{
+			    // Select this gameObject so it doesn't jump to the last selection as soon as it unlocks.
+			    Selection.activeGameObject = inputNode.ParentAsset.RootGameObject.gameObject;
+			}
+
+		    }
+		}
+
+		
+	    }
+	}
+
+	private static void SetInspectorLock(bool set)
+	{
+	    ActiveEditorTracker.sharedTracker.isLocked = set;
+	    ActiveEditorTracker.sharedTracker.ForceRebuild();
+	}
+
     }
 
 }       // HoudiniEngineUnity

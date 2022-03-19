@@ -65,6 +65,7 @@ namespace HoudiniEngineUnity
 	    _ownerSync = ownerSync;
 	    _session = session;
 	    _name = name;
+	    _assetCachePath = GetValidAssetCacheFolderPath(_name);
 
 	    _generateOptions = _ownerSync._generateOptions;
 
@@ -307,7 +308,7 @@ namespace HoudiniEngineUnity
 
 	    // Create Unity mesh buffers
 	    if (!GenerateMeshBuffers(_session, nodeID, meshParts, _generateOptions._splitPoints, _generateOptions._useLODGroups,
-				_generateOptions._generateUVs, _generateOptions._generateTangents, _generateOptions._generateNormals,
+				_generateOptions._generateUVs, _generateOptions._generateTangents, _generateOptions._generateNormals, loadObject,
 				out loadObject._meshBuffers))
 	    {
 		AppendLog(HEU_LoadData.LoadStatus.ERROR, string.Format("Unable to generate mesh data from parts."));
@@ -759,15 +760,8 @@ namespace HoudiniEngineUnity
 		}
 
 		// Get the tile index, if it exists, for this part
-		HAPI_AttributeInfo tileAttrInfo = new HAPI_AttributeInfo();
-		int[] tileAttrData = new int[0];
-		HEU_GeneralUtility.GetAttribute(session, nodeID, volumeParts[i].id, HEU_Defines.HAPI_HEIGHTFIELD_TILE_ATTR, ref tileAttrInfo, ref tileAttrData, session.GetAttributeIntData);
-
 		int tileIndex = 0;
-		if (tileAttrInfo.exists && tileAttrData.Length == 1)
-		{
-		    tileIndex = tileAttrData[0];
-		}
+		HEU_TerrainUtility.GetAttributeTile(session, nodeID, volumeParts[i].id, out tileIndex);
 
 		// Add layer based on tile index
 		if (tileIndex >= 0)
@@ -917,19 +911,7 @@ namespace HoudiniEngineUnity
 	    {
 		// Find the terrain tile (use primitive attr). Assume 0 tile if not set (i.e. not split into tiles)
 		int terrainTile = 0;
-		HAPI_AttributeInfo tileAttrInfo = new HAPI_AttributeInfo();
-		int[] tileAttrData = new int[0];
-		if (!HEU_GeneralUtility.GetAttribute(session, nodeID, scatterInstancerParts[i].id, HEU_Defines.HAPI_HEIGHTFIELD_TILE_ATTR, ref tileAttrInfo, ref tileAttrData, session.GetAttributeIntData))
-		{
-		    // Try part 0 (the height layer) to get the tile index.
-		    // For scatter points merged with HF, in some cases the part ID doesn't have the tile attribute.
-		    HEU_GeneralUtility.GetAttribute(session, nodeID, 0, HEU_Defines.HAPI_HEIGHTFIELD_TILE_ATTR, ref tileAttrInfo, ref tileAttrData, session.GetAttributeIntData);
-		}
-
-		if (tileAttrData != null && tileAttrData.Length > 0)
-		{
-		    terrainTile = tileAttrData[0];
-		}
+		HEU_TerrainUtility.GetAttributeTile(session, nodeID,  scatterInstancerParts[i].id, out terrainTile);
 
 		// Find the volume layer associated with this part using the terrain tile index
 		HEU_LoadBufferVolume volumeBuffer = GetLoadBufferVolumeFromTileIndex(terrainTile, volumeBuffers);
@@ -1012,7 +994,7 @@ namespace HoudiniEngineUnity
 	
 
 	public bool GenerateMeshBuffers(HEU_SessionBase session, HAPI_NodeId nodeID, List<HAPI_PartInfo> meshParts,
-		bool bSplitPoints, bool bUseLODGroups, bool bGenerateUVs, bool bGenerateTangents, bool bGenerateNormals,
+		bool bSplitPoints, bool bUseLODGroups, bool bGenerateUVs, bool bGenerateTangents, bool bGenerateNormals, HEU_LoadObject loadObject,
 		out List<HEU_LoadBufferMesh> meshBuffers)
 	{
 	    meshBuffers = null;
@@ -1022,7 +1004,7 @@ namespace HoudiniEngineUnity
 	    }
 
 	    bool bSuccess = true;
-	    string assetCacheFolderPath = "";
+	    string assetCacheFolderPath = _assetCachePath;
 
 	    meshBuffers = new List<HEU_LoadBufferMesh>();
 
@@ -1037,7 +1019,9 @@ namespace HoudiniEngineUnity
 		{
 		    List<HEU_MaterialData> materialCache = new List<HEU_MaterialData>();
 
-		    HEU_GenerateGeoCache geoCache = HEU_GenerateGeoCache.GetPopulatedGeoCache(session, -1, geoID, partID, bUseLODGroups,
+		    int assetId = loadObject != null ? loadObject._displayNodeID : -1;
+
+		    HEU_GenerateGeoCache geoCache = HEU_GenerateGeoCache.GetPopulatedGeoCache(session, assetId, geoID, partID, bUseLODGroups,
 			    materialCache, assetCacheFolderPath);
 		    if (geoCache == null)
 		    {
@@ -1277,6 +1261,11 @@ namespace HoudiniEngineUnity
 	    return null;
 	}
 
+	public static string GetValidAssetCacheFolderPath(string name)
+	{
+	    return HEU_AssetDatabase.CreateAssetCacheFolder(name);
+	}
+
 	#endregion
 
 	#endregion
@@ -1288,6 +1277,8 @@ namespace HoudiniEngineUnity
 	private HEU_SessionBase _session;
 
 	private HEU_GenerateOptions _generateOptions;
+
+	protected string _assetCachePath = "";
 
 	// Load
 	public enum LoadType

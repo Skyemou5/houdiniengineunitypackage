@@ -63,7 +63,15 @@ namespace HoudiniEngineUnity
 
 	public bool Editable { get { return _geoInfo.isEditable; } }
 
-	public bool Displayable { get { return _geoInfo.isDisplayGeo; } }
+	public bool Displayable
+	{
+	    get
+	    {
+		if (ParentAsset && ParentAsset.UseOutputNodes == true) return true; // Trust that it is displayable if using output nodes
+
+		return _geoInfo.isDisplayGeo;
+	    }
+	}
 
 	public bool IsVisible() { return _containerObjectNode.IsVisible(); }
 
@@ -217,6 +225,11 @@ namespace HoudiniEngineUnity
 	    List<HEU_PartData> oldParts = new List<HEU_PartData>(_parts);
 	    _parts.Clear();
 
+	    if (ParentAsset == null)
+	    {
+		return;
+	    }
+
 	    try
 	    {
 		if (!_geoInfo.isDisplayGeo && !ParentAsset.UseOutputNodes)
@@ -337,6 +350,11 @@ namespace HoudiniEngineUnity
 	private void ProcessPart(HEU_SessionBase session, int partID, ref HAPI_PartInfo partInfo, ref HEU_PartData partData)
 	{
 	    HEU_HoudiniAsset parentAsset = ParentAsset;
+	    if (parentAsset == null)
+	    {
+		return;
+	    }
+
 	    bool bResult = true;
 	    //HEU_Logger.LogFormat("Part: name={0}, id={1}, type={2}, instanced={3}, instance count={4}, instance part count={5}", HEU_SessionManager.GetString(partInfo.nameSH, session), partID, partInfo.type, partInfo.isInstanced, partInfo.instanceCount, partInfo.instancedPartCount);
 
@@ -523,6 +541,12 @@ namespace HoudiniEngineUnity
 
 	private void SetupGameObjectAndTransform(HEU_PartData partData, HEU_HoudiniAsset parentAsset)
 	{
+	    // Checking for nulls for undo safety
+	    if (partData == null || parentAsset == null || parentAsset.OwnerGameObject == null || parentAsset.RootGameObject == null)
+	    {
+		return;
+	    }
+
 	    // Set a valid gameobject for this part
 	    if (partData.OutputGameObject == null)
 	    {
@@ -575,14 +599,35 @@ namespace HoudiniEngineUnity
 	/// </summary>
 	public void GeneratePartInstances(HEU_SessionBase session)
 	{
+
+	    List<HEU_PartData> partsToDestroy = new List<HEU_PartData>();
 	    int numParts = _parts.Count;
 	    for (int i = 0; i < numParts; ++i)
 	    {
 		if (_parts[i].IsPartInstancer() && !_parts[i].HaveInstancesBeenGenerated())
 		{
-		    _parts[i].GeneratePartInstances(session);
+		    if (!_parts[i].GeneratePartInstances(session))
+		    {
+			partsToDestroy.Add(_parts[i]);
+		    }
 		}
 	    }
+
+	    int numPartsToDestroy = partsToDestroy.Count;
+	    for (int i = 0; i < numPartsToDestroy; ++i)
+	    {
+		HEU_GeoNode parentNode = partsToDestroy[i].ParentGeoNode;
+		if (parentNode != null)
+		{
+		    parentNode.RemoveAndDestroyPart(partsToDestroy[i]);
+		}
+		else
+		{
+		    HEU_PartData.DestroyPart(partsToDestroy[i]);
+		}
+	    }
+	    partsToDestroy.Clear();
+
 	}
 
 	public void GenerateAttributesStore(HEU_SessionBase session)
@@ -597,6 +642,10 @@ namespace HoudiniEngineUnity
 	private void ProcessGeoCurve(HEU_SessionBase session)
 	{
 	    HEU_HoudiniAsset parentAsset = ParentAsset;
+	    if (parentAsset == null)
+	    {
+		return;
+	    }
 
 	    string curveName = GenerateGeoCurveName();
 	    curveName = HEU_EditorUtility.GetUniqueNameForSibling(ParentAsset.RootGameObject.transform, curveName);
@@ -640,6 +689,11 @@ namespace HoudiniEngineUnity
 
 	private void SetupGeoCurveGameObjectAndTransform(HEU_Curve curve)
 	{
+	    if (ParentAsset == null)
+	    {
+		return;
+	    }
+
 	    if (curve._targetGameObject == null)
 	    {
 		curve._targetGameObject = new GameObject();
@@ -953,6 +1007,11 @@ namespace HoudiniEngineUnity
 
 	public void ProcessVolumeParts(HEU_SessionBase session, List<HEU_PartData> volumeParts, bool bRebuild)
 	{
+	    if (ParentAsset == null)
+	    {
+		return;
+	    }
+
 	    int numVolumeParts = volumeParts.Count;
 	    if (numVolumeParts == 0)
 	    {
@@ -974,15 +1033,7 @@ namespace HoudiniEngineUnity
 	    {
 		// Find the terrain tile (use primitive attr). Assume 0 tile if not set (i.e. not split into tiles)
 		int terrainTile = 0;
-		HAPI_AttributeInfo tileAttrInfo = new HAPI_AttributeInfo();
-		int[] tileAttrData = new int[0];
-		if (HEU_GeneralUtility.GetAttribute(session, GeoID, _parts[i].PartID, HEU_Defines.HAPI_HEIGHTFIELD_TILE_ATTR, ref tileAttrInfo, ref tileAttrData, session.GetAttributeIntData))
-		{
-		    if (tileAttrData != null && tileAttrData.Length > 0)
-		    {
-			terrainTile = tileAttrData[0];
-		    }
-		}
+		HEU_TerrainUtility.GetAttributeTile(session, GeoID, _parts[i].PartID, out terrainTile);
 
 		// Find the volumecache associated with this part using the terrain tile index
 		HEU_VolumeCache volumeCache = GetVolumeCacheByTileIndex(terrainTile);
@@ -1063,7 +1114,8 @@ namespace HoudiniEngineUnity
 		{
 		    if (_volumeCaches[i] != null)
 		    {
-			ParentAsset.RemoveVolumeCache(_volumeCaches[i]);
+			if (ParentAsset)
+			    ParentAsset.RemoveVolumeCache(_volumeCaches[i]);
 			HEU_GeneralUtility.DestroyImmediate(_volumeCaches[i]);
 			_volumeCaches[i] = null;
 		    }
